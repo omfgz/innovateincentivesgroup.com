@@ -1,0 +1,4 @@
+# Shared helpers are included by the endpoints, never requested directly.
+<FilesMatch "^_">
+    Require all denied
+</FilesMatch>

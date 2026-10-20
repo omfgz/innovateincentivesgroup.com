@@ -3,84 +3,15 @@
  * SR&ED calculator lead capture (POST from /sred-calculator/).
  *
  * Replaces the WordPress "IIG SR&ED Calculator" WPCode snippet:
- *  1. saves the lead (CSV outside public_html, so deploys never touch it
- *     and it is never web-accessible),
+ *  1. saves the lead to private/sred-leads/leads.csv,
  *  2. emails the lead to the team,
  *  3. sends the visitor the thank-you auto-responder.
  * Mail goes through PHP mail() from noreply@, exactly as WordPress did.
  */
 declare(strict_types=1);
+require __DIR__ . '/_lib.php';
 
-const ADMIN_EMAIL     = 'info@innovateincentivesgroup.com';
-const FROM_EMAIL      = 'noreply@innovateincentivesgroup.com';
-const FROM_NAME       = 'Innovate Incentives Group';
-const SITE_URL        = 'https://innovateincentivesgroup.com';
-const ALLOWED_ORIGINS = ['https://innovateincentivesgroup.com', 'https://www.innovateincentivesgroup.com'];
-const RATE_LIMIT      = 5;    // submissions per IP...
-const RATE_WINDOW     = 3600; // ...per hour
-
-// ~/www/innovateincentivesgroup.com/private/sred-leads
-$dataDir = dirname(__DIR__, 2) . '/private/sred-leads';
-
-header('Content-Type: application/json; charset=utf-8');
-header('X-Robots-Tag: noindex, nofollow');
-header('Cache-Control: no-store');
-
-function respond(int $code, array $body): void
-{
-    http_response_code($code);
-    echo json_encode($body);
-    exit;
-}
-
-/** Single-line, tag-free, length-capped value from POST. */
-function field(string $key, int $max = 100): string
-{
-    $v = (string)($_POST[$key] ?? '');
-    $v = strip_tags($v);
-    $v = preg_replace('/[\x00-\x1F\x7F]+/u', ' ', $v) ?? '';
-    return mb_substr(trim($v), 0, $max);
-}
-
-function e(string $s): string
-{
-    return htmlspecialchars($s, ENT_QUOTES, 'UTF-8');
-}
-
-/** Stop spreadsheet apps from treating a value as a formula. */
-function csv_safe(string $s): string
-{
-    return preg_match('/^[=+\-@\t]/', $s) ? "'" . $s : $s;
-}
-
-function send_mail(string $to, string $subject, string $html, string $replyTo): bool
-{
-    $headers = implode("\r\n", [
-        'MIME-Version: 1.0',
-        'Content-Type: text/html; charset=UTF-8',
-        'From: ' . FROM_NAME . ' <' . FROM_EMAIL . '>',
-        'Reply-To: ' . $replyTo,
-    ]);
-    $subject = '=?UTF-8?B?' . base64_encode($subject) . '?=';
-    return mail($to, $subject, $html, $headers, '-f' . FROM_EMAIL);
-}
-
-// ---------------------------------------------------------------- guards
-
-if (($_SERVER['REQUEST_METHOD'] ?? '') !== 'POST') {
-    header('Allow: POST');
-    respond(405, ['ok' => false, 'error' => 'Method not allowed']);
-}
-
-$origin = $_SERVER['HTTP_ORIGIN'] ?? '';
-if ($origin !== '' && !in_array($origin, ALLOWED_ORIGINS, true)) {
-    respond(403, ['ok' => false, 'error' => 'Forbidden']);
-}
-
-// Honeypot: real visitors never see or fill this field.
-if (field('website') !== '') {
-    respond(200, ['ok' => true]);
-}
+start_request();
 
 $lead = [
     'name'         => field('name'),
@@ -98,55 +29,11 @@ $lead = [
     'province'     => field('prov', 20),
     'total_return' => field('total_return', 30),
 ];
+require_fields($lead, ['name', 'company', 'industry', 'phone', 'email', 'sred_pct']);
 
-foreach (['name', 'company', 'industry', 'phone', 'email', 'sred_pct'] as $required) {
-    if ($lead[$required] === '') {
-        respond(422, ['ok' => false, 'error' => "Missing field: $required"]);
-    }
-}
-if (!filter_var($lead['email'], FILTER_VALIDATE_EMAIL)) {
-    respond(422, ['ok' => false, 'error' => 'Invalid email']);
-}
-
-if (!is_dir($dataDir) && !mkdir($dataDir, 0700, true) && !is_dir($dataDir)) {
-    error_log('sred-lead: cannot create ' . $dataDir);
-    respond(500, ['ok' => false, 'error' => 'Server error']);
-}
-
-// Rate limit per IP (hashed, so raw IPs are not stored).
-$rlFile = $dataDir . '/ratelimit.json';
-$rl = fopen($rlFile, 'c+');
-if ($rl && flock($rl, LOCK_EX)) {
-    $now  = time();
-    $ipId = hash('sha256', ($_SERVER['REMOTE_ADDR'] ?? '') . '|iig');
-    $hits = json_decode(stream_get_contents($rl) ?: '{}', true) ?: [];
-    foreach ($hits as $k => $times) {
-        $hits[$k] = array_values(array_filter($times, fn($t) => $t > $now - RATE_WINDOW));
-        if (!$hits[$k]) unset($hits[$k]);
-    }
-    $limited = count($hits[$ipId] ?? []) >= RATE_LIMIT;
-    if (!$limited) $hits[$ipId][] = $now;
-    ftruncate($rl, 0);
-    rewind($rl);
-    fwrite($rl, json_encode($hits));
-    flock($rl, LOCK_UN);
-    fclose($rl);
-    if ($limited) respond(429, ['ok' => false, 'error' => 'Too many submissions, please try later']);
-}
-
-// ---------------------------------------------------------------- save
-
-$csv   = $dataDir . '/leads.csv';
-$isNew = !file_exists($csv);
-$fh    = fopen($csv, 'a');
-if ($fh && flock($fh, LOCK_EX)) {
-    if ($isNew) fputcsv($fh, array_merge(['time'], array_keys($lead)));
-    fputcsv($fh, array_map('csv_safe', array_merge([date('Y-m-d H:i:s')], array_values($lead))));
-    flock($fh, LOCK_UN);
-    fclose($fh);
-} else {
-    error_log('sred-lead: cannot write ' . $csv);
-}
+$dir = data_dir('sred-leads');
+rate_limit($dir);
+save_lead($dir, $lead);
 
 // ---------------------------------------------------------------- emails
 

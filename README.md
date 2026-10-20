@@ -18,9 +18,12 @@ You can also redeploy at any time from **Actions → Deploy to SiteGround → Ru
 | --- | --- |
 | `website/index.html` | `/` and `/services/` (same page, via `.htaccess`) |
 | `website/services/<slug>/index.html` | `/services/<slug>/` |
-| `website/why-iig/`, `faqs/`, `privacy-policy/`, `sred-calculator/` | Company and information pages |
+| `website/why-iig/`, `faqs/`, `privacy-policy/`, `sred-calculator/`, `partnerships/` | Company and information pages |
 | `website/api/sred-lead.php` | SR&ED calculator lead capture (PHP) |
+| `website/api/partner-lead.php` | Partnership form on `/partnerships/` (PHP) |
+| `website/api/_lib.php` | Shared form helpers: spam checks, rate limit, CSV, mail (not web-accessible) |
 | `website/assets/email/` | Images used in outgoing emails |
+| `website/assets/img/` | Page photos |
 | `website/.htaccess` | HTTPS redirect and rewrites |
 
 Each page is self-contained (its own CSS and embedded logo). The shared header, footer and contact form are repeated in every page, so a change to them must be made in all pages.
@@ -33,7 +36,9 @@ The calculator at `/sred-calculator/` runs entirely in the browser. When a visit
 - sends the visitor a thank-you email from `noreply@innovateincentivesgroup.com`,
 - appends the lead to `~/www/innovateincentivesgroup.com/private/sred-leads/leads.csv` on the server (outside the web root; deploys never touch it).
 
-Email addresses and the thank-you template are set at the top of `api/sred-lead.php`. Leads captured before the move are in the WordPress database on staging2 (WP admin → SR&ED Leads).
+The partnership form on `/partnerships/` works the same way through `api/partner-lead.php`: it emails the enquiry to info@ (Reply-To the partner) and saves it to `private/partner-leads/leads.csv`.
+
+Email addresses are set in `api/_lib.php`; the calculator's thank-you template is in `api/sred-lead.php`. Leads captured before the move are in the WordPress database on staging2 (WP admin → SR&ED Leads).
 
 To add a page, create `website/<path>/index.html` and it will be served at `/<path>/`.
 
