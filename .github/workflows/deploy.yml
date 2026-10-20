@@ -61,14 +61,12 @@ jobs:
           echo "$out" | grep -q 'msg=OK'
 
       - name: Smoke test
+        # Runs curl on the server itself: SiteGround's bot protection answers
+        # GitHub runner IPs with a 202 challenge page instead of the site.
         run: |
-          fail=0
-          for path in / /services/ $(cd website && find services -mindepth 2 -name index.html -printf '/%h/\n'); do
-            code=$(curl -s -o /dev/null -w '%{http_code}' "$SITE_URL$path")
-            echo "$code $path"
-            [ "$code" = "200" ] || fail=1
-          done
-          exit $fail
+          paths="/ /services/ $(cd website && find services -mindepth 2 -name index.html -printf '/%h/ ')"
+          ssh -i ~/.ssh/id_deploy -p "$SSH_PORT" -o StrictHostKeyChecking=yes "$SSH_USER@$SSH_HOST" \
+            "fail=0; for p in $paths; do c=\$(curl -s -o /dev/null -w '%{http_code}' '$SITE_URL'\$p); echo \"\$c \$p\"; [ \"\$c\" = 200 ] || fail=1; done; exit \$fail"
 
       - name: Clean up key
         if: always()
