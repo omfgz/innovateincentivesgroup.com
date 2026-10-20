@@ -26,7 +26,7 @@ jobs:
       REMOTE_DIR: www/innovateincentivesgroup.com/public_html/
       SITE_URL: https://innovateincentivesgroup.com
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Set up SSH
         run: |
