@@ -1,0 +1,75 @@
+name: Deploy to SiteGround
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "website/**"
+      - ".github/workflows/deploy.yml"
+  workflow_dispatch:
+
+# Never run two deploys at once; a newer push waits for the current one.
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: production
+      url: https://innovateincentivesgroup.com/
+    env:
+      SSH_HOST: ${{ secrets.SG_SSH_HOST }}
+      SSH_PORT: ${{ secrets.SG_SSH_PORT }}
+      SSH_USER: ${{ secrets.SG_SSH_USER }}
+      REMOTE_DIR: www/innovateincentivesgroup.com/public_html/
+      SITE_URL: https://innovateincentivesgroup.com
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up SSH
+        run: |
+          for s in SSH_HOST SSH_PORT SSH_USER; do
+            [ -n "${!s}" ] || { echo "::error::Repo secret SG_$s is not set (Settings > Secrets and variables > Actions)"; exit 1; }
+          done
+          [ -n "${{ secrets.SG_SSH_KEY }}" ] || { echo "::error::Repo secret SG_SSH_KEY is not set"; exit 1; }
+          [ -n "${{ secrets.SG_KNOWN_HOSTS }}" ] || { echo "::error::Repo secret SG_KNOWN_HOSTS is not set"; exit 1; }
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "${{ secrets.SG_SSH_KEY }}" > ~/.ssh/id_deploy
+          chmod 600 ~/.ssh/id_deploy
+          printf '%s\n' "${{ secrets.SG_KNOWN_HOSTS }}" > ~/.ssh/known_hosts
+          chmod 644 ~/.ssh/known_hosts
+
+      - name: Upload site (rsync)
+        # --delete removes files that were deleted from the repo.
+        # Excluded paths are server-managed and are never touched.
+        run: |
+          rsync -rlvz --checksum --delete \
+            --chmod=D755,F644 \
+            --exclude='.well-known/' \
+            --exclude='php_errorlog' \
+            --exclude='.user.ini' \
+            -e "ssh -i ~/.ssh/id_deploy -p $SSH_PORT -o StrictHostKeyChecking=yes" \
+            website/ "$SSH_USER@$SSH_HOST:$REMOTE_DIR"
+
+      - name: Flush SiteGround cache
+        run: |
+          out=$(ssh -i ~/.ssh/id_deploy -p "$SSH_PORT" -o StrictHostKeyChecking=yes "$SSH_USER@$SSH_HOST" \
+            'site-tools-client domain-all update id=innovateincentivesgroup.com flush_cache=1')
+          echo "$out"
+          echo "$out" | grep -q 'msg=OK'
+
+      - name: Smoke test
+        run: |
+          fail=0
+          for path in / /services/ $(cd website && find services -mindepth 2 -name index.html -printf '/%h/\n'); do
+            code=$(curl -s -o /dev/null -w '%{http_code}' "$SITE_URL$path")
+            echo "$code $path"
+            [ "$code" = "200" ] || fail=1
+          done
+          exit $fail
+
+      - name: Clean up key
+        if: always()
+        run: rm -f ~/.ssh/id_deploy
