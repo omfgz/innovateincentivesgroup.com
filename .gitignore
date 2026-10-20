@@ -10,3 +10,6 @@ Thumbs.db
 desktop.ini
 .vscode/
 .idea/
+
+# Local Claude Code preview config
+.claude/

@@ -61,12 +61,20 @@ jobs:
           echo "$out" | grep -q 'msg=OK'
 
       - name: Smoke test
-        # Runs curl on the server itself: SiteGround's bot protection answers
+        # Runs on the server itself: SiteGround's bot protection answers
         # GitHub runner IPs with a 202 challenge page instead of the site.
+        # Every page must return 200; PHP must lint; the lead API must be
+        # reachable (a GET returns 405, so no lead or email is created).
         run: |
-          paths="/ /services/ $(cd website && find services -mindepth 2 -name index.html -printf '/%h/ ')"
-          ssh -i ~/.ssh/id_deploy -p "$SSH_PORT" -o StrictHostKeyChecking=yes "$SSH_USER@$SSH_HOST" \
-            "fail=0; for p in $paths; do c=\$(curl -s -o /dev/null -w '%{http_code}' '$SITE_URL'\$p); echo \"\$c \$p\"; [ \"\$c\" = 200 ] || fail=1; done; exit \$fail"
+          paths="/services/ $(cd website && find . -mindepth 1 -name index.html -printf '/%h/ ' | sed 's#/\./#/#g')"
+          php=$(cd website && find . -name '*.php' -printf '%P ')
+          ssh -i ~/.ssh/id_deploy -p "$SSH_PORT" -o StrictHostKeyChecking=yes "$SSH_USER@$SSH_HOST" "
+            fail=0
+            cd '$REMOTE_DIR'
+            for f in $php; do php -l \"\$f\" >/dev/null && echo \"ok  php -l \$f\" || { echo \"BAD php -l \$f\"; fail=1; }; done
+            for p in / $paths; do c=\$(curl -s -o /dev/null -w '%{http_code}' '$SITE_URL'\$p); echo \"\$c \$p\"; [ \"\$c\" = 200 ] || fail=1; done
+            c=\$(curl -s -o /dev/null -w '%{http_code}' '$SITE_URL/api/sred-lead.php'); echo \"\$c /api/sred-lead.php (expect 405)\"; [ \"\$c\" = 405 ] || fail=1
+            exit \$fail"
 
       - name: Clean up key
         if: always()
